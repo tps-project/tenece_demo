@@ -1,173 +1,61 @@
 ---
-- name: Run health check and collect results from all nodes
+- name: Run health check and save report on the web server
   hosts: web
   become: yes
-  become_user: "{{ user }}"
+  become_method: sudo
   gather_facts: no
 
-  tasks:
-    - name: Run health check and format output
-      shell: |
-        #!/bin/bash
-        # CPU Usage 
-        cpu=$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print 100 - $1"%"}')
-
-        # Memory Usage 
-        mem=$(free -m | awk 'NR==2 {printf "%.2f%%", $3*100/$2}')
-
-        # Disk Usage 
-        disk=$(df -h / | awk 'NR==2 {print $5}')
-
-        # Filesystem layout
-        fs=$(lsblk -o NAME,SIZE,MOUNTPOINT)
-
-        # Network Stats for eth0
-        net=$(awk '{if ($1 ~ /[a-zA-Z0-9]+:/) {print "RX=" $2 " bytes, TX=" $10 " bytes"}}' /proc/net/dev)
-
-        echo "CPU Usage      : $cpu"
-        echo "Memory Usage   : $mem"
-        echo "Disk Usage     : $disk"
-        echo "Filesystem Info:"
-        echo "$fs"
-        echo "Network (eth0) : $net"
-      register: health_output
-
-    - name: Save output to TXT on remote node
-      copy:
-        dest: "/tmp/{{ inventory_hostname }}.txt"
-        content: "{{ health_output.stdout }}"
-
-    - name: Fetch TXT files to control node
-      fetch:
-        src: "/tmp/{{ inventory_hostname }}.txt"
-        dest: "./fetched_health_reports/"
-        flat: yes
-
-- name: Consolidate TXT files into per-host HTML and send ZIP
-  hosts: net
-  gather_facts: no
   vars:
-    report_dir: "/export/home/ansible_sodr/unix_health_reports"
-    zip_file: "/export/home/ansible_sodr/unix_health_report.zip"
-    html_script_path: "/tmp/generate_unix_health_html.py"
-    smtp_server: "172.24.32.68"
-    smtp_port: 25
-    sender_email: "Ansible.ng@mtn.com"
-    recipient_emails:
-      - "oyetunde.ola@convergroup.com"
-      - "chinwendu.okoli@convergroup.com"
-      - "#ISUNIXSupport.NG@mtn.com"
-      - "Jonathan.Asogwa@mtn.com"
-      - "David.bankole@convergroup.com"
-    subject: "Unix Health Report for {{ application_name }} "
-    body: "Attached is the latest UNIX health check report for {{ application_name }} ."
-    email_script_path: "/tmp/send_unix_health_zip.py"
+    report_dir: "/var/log/ansible-health-reports"
+    report_timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+    report_file: "{{ report_dir }}/health_report_{{ inventory_hostname }}_{{ report_timestamp }}.txt"
 
   tasks:
-    - name: Clean old report directory
-      file:
-        path: "{{ report_dir }}"
-        state: absent
-
-    - name: Recreate report directory
+    - name: Create health-report directory
       file:
         path: "{{ report_dir }}"
         state: directory
-        mode: '0755'
+        owner: root
+        group: root
+        mode: "0755"
 
-    - name: Find fetched TXT files on control node
-      find:
-        paths: "./fetched_health_reports/"
-        patterns: "*.txt"
-      delegate_to: localhost
-      register: fetched_txts
-
-    - name: Copy TXT files to net node
-      copy:
-        src: "{{ item.path }}"
-        dest: "{{ report_dir }}/{{ item.path | basename }}"
-        mode: '0644'
-      loop: "{{ fetched_txts.files }}"
-
-    - name: Upload TXT-to-HTML conversion script (per-host HTML)
-      copy:
-        dest: "{{ html_script_path }}"
-        mode: '0755'
-        content: |
-          #!/usr/bin/env python3
-          import os
-
-          def convert_each_txt_to_html(txt_dir):
-              for filename in os.listdir(txt_dir):
-                  if filename.endswith(".txt"):
-                      txt_path = os.path.join(txt_dir, filename)
-                      html_filename = os.path.splitext(filename)[0] + ".html"
-                      html_path = os.path.join(txt_dir, html_filename)
-                      try:
-                          with open(txt_path, 'r') as f:
-                              content = f.read()
-                          html_content = f"<html><head><style>pre {{ '{{' }} font-family: monospace; {{ '}}' }}</style></head><body><h2>{html_filename}</h2><pre>{content}</pre></body></html>"
-                          with open(html_path, 'w') as html_file:
-                              html_file.write(html_content)
-                      except Exception as e:
-                          print(f"Error converting {filename}: {e}")
-
-          if __name__ == "__main__":
-              convert_each_txt_to_html("{{ report_dir }}")
-
-    - name: Generate per-host HTML files
-      command: /usr/bin/python3.6 {{ html_script_path }}
-
-    - name: Create ZIP archive of all HTML files
+    - name: Run health check
       shell: |
-        cd {{ report_dir }}
-        zip -r {{ zip_file }} *.html
+        #!/bin/bash
+        set -o pipefail
 
-    - name: Upload ZIP email script
+        cpu=$(top -bn1 | awk -F',' '/Cpu\(s\)/ {gsub(/[^0-9.]/, "", $4); print 100 - $4 "%"}')
+        mem=$(free -m | awk 'NR==2 {printf "%.2f%%", $3 * 100 / $2}')
+        disk=$(df -h / | awk 'NR==2 {print $5}')
+        fs=$(lsblk -o NAME,SIZE,MOUNTPOINT)
+        net=$(awk '/:/ && $1 !~ /lo:/ {gsub(/:/, "", $1); print $1 ": RX=" $2 " bytes, TX=" $10 " bytes"}' /proc/net/dev)
+
+        echo "UNIX HEALTH REPORT"
+        echo "=================="
+        echo "Host           : $(hostname)"
+        echo "Generated      : $(date)"
+        echo "CPU Usage      : $cpu"
+        echo "Memory Usage   : $mem"
+        echo "Disk Usage     : $disk"
+        echo
+        echo "Filesystem Info:"
+        echo "$fs"
+        echo
+        echo "Network Stats:"
+        echo "$net"
+      args:
+        executable: /bin/bash
+      register: health_output
+      changed_when: false
+
+    - name: Save health report on the server
       copy:
-        dest: "{{ email_script_path }}"
-        mode: '0755'
-        content: |
-          #!/usr/bin/env python3
-          import smtplib
-          from email.message import EmailMessage
-          from email.utils import formatdate
-          import os
-          import sys
+        dest: "{{ report_file }}"
+        content: "{{ health_output.stdout }}\n"
+        owner: root
+        group: root
+        mode: "0644"
 
-          def send_email(smtp_server, port, sender, recipients, subject, body, attachment_path):
-              msg = EmailMessage()
-              msg['From'] = sender
-              msg['To'] = ', '.join(recipients)
-              msg['Date'] = formatdate(localtime=True)
-              msg['Subject'] = subject
-              msg.set_content(body)
-              try:
-                  with open(attachment_path, 'rb') as f:
-                      file_data = f.read()
-                      file_name = os.path.basename(attachment_path)
-                      msg.add_attachment(file_data, maintype='application', subtype='zip', filename=file_name)
-              except Exception as e:
-                  print(f"Attachment error: {e}")
-                  sys.exit(1)
-              try:
-                  with smtplib.SMTP(smtp_server, port) as server:
-                      server.send_message(msg)
-                  print("Email sent.")
-              except Exception as e:
-                  print(f"Email error: {e}")
-                  sys.exit(1)
-
-          if __name__ == "__main__":
-              send_email(
-                  smtp_server="{{ smtp_server }}",
-                  port={{ smtp_port }},
-                  sender="{{ sender_email }}",
-                  recipients={{ recipient_emails }},
-                  subject="{{ subject }}",
-                  body="{{ body }}",
-                  attachment_path="{{ zip_file }}"
-              )
-
-    - name: Send ZIP archive via email
-      command: /usr/bin/python3.6 {{ email_script_path }}
+    - name: Show saved report location
+      debug:
+        msg: "Health report saved on {{ inventory_hostname }} at {{ report_file }}"
