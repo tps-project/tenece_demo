@@ -7,9 +7,8 @@
 
   vars:
     report_dir: "/var/log/ansible-health-reports"
-    report_timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
-    report_file: "{{ report_dir }}/health_report_{{ inventory_hostname }}_{{ report_timestamp }}.txt"
 
+    # dont forget to change
     smtp_server: "smtp.office365.com"
     smtp_port: 587
     smtp_username: "ola.oyetunde@tenece.com"
@@ -18,7 +17,7 @@
 
     recipient_emails:
       - "ola.oyetunde@tenece.com"
-      # - "another.person@tenece.com"
+      - "olasunkanmi.aliu@tenece.com"
 
     subject: "Unix Health Report - {{ inventory_hostname }}"
     body: >-
@@ -28,6 +27,15 @@
     email_script_path: "/tmp/send_health_report_email.py"
 
   tasks:
+    # --- 
+    - name: Compute report timestamp once
+      ansible.builtin.set_fact:
+        report_timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+
+    - name: Set report file path
+      ansible.builtin.set_fact:
+        report_file: "{{ report_dir }}/health_report_{{ inventory_hostname }}_{{ report_timestamp }}.txt"
+
     - name: Create health-report directory
       ansible.builtin.file:
         path: "{{ report_dir }}"
@@ -139,7 +147,7 @@
       no_log: false
       register: email_result
 
-    - name: show email command ouptut
+    - name: Show email command output
       ansible.builtin.debug:
         var: email_result
 
