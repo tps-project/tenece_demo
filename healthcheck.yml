@@ -131,12 +131,17 @@
                   body={{ body | to_json }},
                   attachment_path={{ report_file | to_json }}
               )
-      no_log: true
+      no_log: false
 
     - name: Send health report through Microsoft 365
       ansible.builtin.command:
         cmd: "/usr/bin/python3 {{ email_script_path }}"
-      no_log: true
+      no_log: false
+      register: email_result
+
+    - name: show email command ouptut
+      ansible.builtin.debug:
+        var: email_result
 
     - name: Remove temporary email script
       ansible.builtin.file:
