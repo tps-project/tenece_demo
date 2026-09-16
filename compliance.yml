@@ -1,0 +1,150 @@
+---
+- name: CIS Baseline Compliance Audit
+  hosts: web
+  become: true
+  gather_facts: true
+
+  vars:
+    scap_profile: "xccdf_org.ssgproject.content_profile_cis"
+
+    remote_report_dir: "/tmp/cis-audit"
+
+    report_server_group: "report_server"
+    report_server_dir: "/var/reports/cis-audit/{{ inventory_hostname }}"
+
+    local_scratch_dir: "/tmp/cis-audit-{{ report_timestamp }}-{{ inventory_hostname }}"
+
+    ssg_content_map:
+      "8": "/usr/share/xml/scap/ssg/content/ssg-rhel8-ds.xml"
+      "9": "/usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml"
+
+    report_timestamp: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
+
+  pre_tasks:
+    - name: Set the datastream content file for this host's OS major version
+      ansible.builtin.set_fact:
+        ssg_datastream: "{{ ssg_content_map[ansible_distribution_major_version] | default(omit) }}"
+
+    - name: Fail early if we don't have mapped SCAP content for this OS version
+      ansible.builtin.fail:
+        msg: >
+          No scap-security-guide datastream mapped for
+          {{ ansible_distribution }} {{ ansible_distribution_major_version }}
+          on {{ inventory_hostname }}. Update ssg_content_map.
+      when: ssg_datastream is not defined
+
+  tasks:
+    - name: Ensure OpenSCAP scanner and SCAP Security Guide content are installed
+      ansible.builtin.dnf:
+        name:
+          - openscap-scanner
+          - scap-security-guide
+        state: present
+
+    - name: Ensure remote report directory exists
+      ansible.builtin.file:
+        path: "{{ remote_report_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Run OpenSCAP evaluation against the CIS profile
+      ansible.builtin.command:
+        cmd: >
+          oscap xccdf eval
+          --profile {{ scap_profile }}
+          --results {{ remote_report_dir }}/results-{{ report_timestamp }}.xml
+          --report {{ remote_report_dir }}/report-{{ report_timestamp }}.html
+          {{ ssg_datastream }}
+      register: oscap_result
+      changed_when: true
+    
+      failed_when: oscap_result.rc not in [0, 2]
+
+    - name: Determine whether a report server is defined in inventory
+      ansible.builtin.set_fact:
+        report_server_host: "{{ groups[report_server_group][0] | default('') }}"
+
+    - name: Fetch report and results to a job-scoped scratch path (mid-run hop only)
+      ansible.builtin.fetch:
+        src: "{{ remote_report_dir }}/{{ item }}-{{ report_timestamp }}.{{ 'html' if item == 'report' else 'xml' }}"
+        dest: "{{ local_scratch_dir }}/"
+        flat: true
+      loop:
+        - report
+        - results
+      when: report_server_host | length > 0
+
+    - name: Ensure destination directory exists on the report server
+      ansible.builtin.file:
+        path: "{{ report_server_dir }}"
+        state: directory
+        mode: "0750"
+      delegate_to: "{{ report_server_host }}"
+      when: report_server_host | length > 0
+
+    - name: Push the report and results to the report server
+      ansible.builtin.copy:
+        src: "{{ local_scratch_dir }}/{{ item }}-{{ report_timestamp }}.{{ 'html' if item == 'report' else 'xml' }}"
+        dest: "{{ report_server_dir }}/"
+        mode: "0640"
+      loop:
+        - report
+        - results
+      delegate_to: "{{ report_server_host }}"
+      when: report_server_host | length > 0
+
+    - name: Remove the job-scoped scratch copy now that it's pushed
+      ansible.builtin.file:
+        path: "{{ local_scratch_dir }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      when: report_server_host | length > 0
+
+    - name: Extract pass/fail rule counts from the results XML
+      ansible.builtin.shell:
+        cmd: >
+          set -o pipefail &&
+          grep -o 'result>pass<' {{ remote_report_dir }}/results-{{ report_timestamp }}.xml | wc -l
+      register: pass_count
+      changed_when: false
+
+    - name: Extract fail count from the results XML
+      ansible.builtin.shell:
+        cmd: >
+          set -o pipefail &&
+          grep -o 'result>fail<' {{ remote_report_dir }}/results-{{ report_timestamp }}.xml | wc -l
+      register: fail_count
+      changed_when: false
+
+    - name: Compute a simple compliance percentage
+      ansible.builtin.set_fact:
+        compliance_pct: >-
+          {{ ((pass_count.stdout | int) / ((pass_count.stdout | int) + (fail_count.stdout | int)) * 100) | round(1) }}
+      when: (pass_count.stdout | int + fail_count.stdout | int) > 0
+
+    - name: Show compliance summary for this host
+      ansible.builtin.debug:
+        msg: >
+          {{ inventory_hostname }} — Profile: {{ scap_profile }} —
+          Passed: {{ pass_count.stdout }}, Failed: {{ fail_count.stdout }},
+          Compliance: {{ compliance_pct | default('n/a') }}%
+
+    - name: Publish compliance results as AAP job artifacts
+      ansible.builtin.set_stats:
+        per_host: true
+        data:
+          cis_scap_profile: "{{ scap_profile }}"
+          cis_pass_count: "{{ pass_count.stdout | int }}"
+          cis_fail_count: "{{ fail_count.stdout | int }}"
+          cis_compliance_pct: "{{ compliance_pct | default(0) }}"
+          cis_report_path_on_host: "{{ remote_report_dir }}/report-{{ report_timestamp }}.html"
+          cis_report_path_on_server: "{{ (report_server_host + ':' + report_server_dir + '/report-' + report_timestamp + '.html') if report_server_host | length > 0 else 'n/a' }}"
+
+  post_tasks:
+    - name: Publish an aggregated (all-hosts) compliance summary as a workflow-level artifact
+      ansible.builtin.set_stats:
+        aggregate: true
+        data:
+          cis_audit_run_timestamp: "{{ report_timestamp }}"
+      run_once: true
