@@ -5,8 +5,10 @@
   gather_facts: true
 
   vars:
+
     scap_profile: "xccdf_org.ssgproject.content_profile_cis"
     remote_report_dir: "/tmp/cis-audit"
+    report_owner: "ocpadmin"
     report_server_group: "report_server"
     report_server_dir: "/var/reports/cis-audit/{{ inventory_hostname }}"
     ssg_content_map:
@@ -14,7 +16,6 @@
       "9": "/usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml"
 
   pre_tasks:
-   
     - name: Compute report timestamp once for this host
       ansible.builtin.set_fact:
         report_timestamp: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
@@ -59,8 +60,18 @@
           {{ ssg_datastream }}
       register: oscap_result
       changed_when: true
-    
       failed_when: oscap_result.rc not in [0, 2]
+
+    - name: Hand the report and results to report_owner so they can be pulled off without root
+      ansible.builtin.file:
+        path: "{{ remote_report_dir }}/{{ item }}-{{ report_timestamp }}.{{ 'html' if item == 'report' else 'xml' }}"
+        owner: "{{ report_owner }}"
+        group: "{{ report_owner }}"
+        mode: "0644"
+      loop:
+        - report
+        - results
+      when: report_owner | length > 0
 
     - name: Determine whether a report server is defined in inventory
       ansible.builtin.set_fact:
@@ -81,7 +92,6 @@
         path: "{{ report_server_dir }}"
         state: directory
         mode: "0750"
-     
       delegate_to: "{{ report_server_host if report_server_host | length > 0 else 'localhost' }}"
       when: report_server_host | length > 0
 
@@ -133,7 +143,6 @@
           Passed: {{ pass_count.stdout }}, Failed: {{ fail_count.stdout }},
           Compliance: {{ compliance_pct | default('n/a') }}%
 
-  
     - name: Publish compliance results as AAP job artifacts
       ansible.builtin.set_stats:
         per_host: true
