@@ -7,23 +7,26 @@
   vars:
     scap_profile: "xccdf_org.ssgproject.content_profile_cis"
 
-
     remote_report_dir: "/tmp/cis-audit"
 
     report_server_group: "report_server"
     report_server_dir: "/var/reports/cis-audit/{{ inventory_hostname }}"
 
   
-    local_scratch_dir: "/tmp/cis-audit-{{ report_timestamp }}-{{ inventory_hostname }}"
-
-
     ssg_content_map:
       "8": "/usr/share/xml/scap/ssg/content/ssg-rhel8-ds.xml"
       "9": "/usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml"
 
-    report_timestamp: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
-
   pre_tasks:
+   
+    - name: Compute report timestamp once for this host
+      ansible.builtin.set_fact:
+        report_timestamp: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
+
+    - name: Set the local scratch path now that the timestamp is fixed
+      ansible.builtin.set_fact:
+        local_scratch_dir: "/tmp/cis-audit-{{ report_timestamp }}-{{ inventory_hostname }}"
+
     - name: Set the datastream content file for this host's OS major version
       ansible.builtin.set_fact:
         ssg_datastream: "{{ ssg_content_map[ansible_distribution_major_version] | default(omit) }}"
@@ -82,7 +85,7 @@
         path: "{{ report_server_dir }}"
         state: directory
         mode: "0750"
-        
+     
       delegate_to: "{{ report_server_host if report_server_host | length > 0 else 'localhost' }}"
       when: report_server_host | length > 0
 
@@ -134,6 +137,7 @@
           Passed: {{ pass_count.stdout }}, Failed: {{ fail_count.stdout }},
           Compliance: {{ compliance_pct | default('n/a') }}%
 
+  
     - name: Publish compliance results as AAP job artifacts
       ansible.builtin.set_stats:
         per_host: true
