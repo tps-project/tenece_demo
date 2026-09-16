@@ -7,12 +7,15 @@
   vars:
     scap_profile: "xccdf_org.ssgproject.content_profile_cis"
 
+
     remote_report_dir: "/tmp/cis-audit"
 
     report_server_group: "report_server"
     report_server_dir: "/var/reports/cis-audit/{{ inventory_hostname }}"
 
+  
     local_scratch_dir: "/tmp/cis-audit-{{ report_timestamp }}-{{ inventory_hostname }}"
+
 
     ssg_content_map:
       "8": "/usr/share/xml/scap/ssg/content/ssg-rhel8-ds.xml"
@@ -79,7 +82,8 @@
         path: "{{ report_server_dir }}"
         state: directory
         mode: "0750"
-      delegate_to: "{{ report_server_host }}"
+        
+      delegate_to: "{{ report_server_host if report_server_host | length > 0 else 'localhost' }}"
       when: report_server_host | length > 0
 
     - name: Push the report and results to the report server
@@ -90,7 +94,7 @@
       loop:
         - report
         - results
-      delegate_to: "{{ report_server_host }}"
+      delegate_to: "{{ report_server_host if report_server_host | length > 0 else 'localhost' }}"
       when: report_server_host | length > 0
 
     - name: Remove the job-scoped scratch copy now that it's pushed
