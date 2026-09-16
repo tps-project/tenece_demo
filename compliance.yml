@@ -6,13 +6,9 @@
 
   vars:
     scap_profile: "xccdf_org.ssgproject.content_profile_cis"
-
     remote_report_dir: "/tmp/cis-audit"
-
     report_server_group: "report_server"
     report_server_dir: "/var/reports/cis-audit/{{ inventory_hostname }}"
-
-  
     ssg_content_map:
       "8": "/usr/share/xml/scap/ssg/content/ssg-rhel8-ds.xml"
       "9": "/usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml"
