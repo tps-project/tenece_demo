@@ -8,16 +8,20 @@
   vars:
     report_dir: "/var/log/ansible-health-reports"
 
-    # dont forget to change
     smtp_server: "smtp.office365.com"
     smtp_port: 587
     smtp_username: "ola.oyetunde@tenece.com"
-    smtp_password: "S*287922454113oq"
     sender_email: "ola.oyetunde@tenece.com"
+
+    # SMTP password is NEVER hardcoded here.
+    # It comes from an AAP Credential injected as an environment variable
+    # on the execution node at job runtime. See AAP setup notes at the
+    # bottom of this file for how to create/attach that credential.
+    smtp_password: "{{ lookup('env', 'SMTP_PASSWORD') }}"
 
     recipient_emails:
       - "ola.oyetunde@tenece.com"
-      - "olasunkanmi.aliu@tenece.com"
+      # - "another.person@tenece.com"
 
     subject: "Unix Health Report - {{ inventory_hostname }}"
     body: >-
@@ -27,7 +31,13 @@
     email_script_path: "/tmp/send_health_report_email.py"
 
   tasks:
-    # --- 
+    - name: Fail early if SMTP password was not supplied
+      ansible.builtin.fail:
+        msg: >-
+          SMTP_PASSWORD environment variable is empty. Make sure the AAP
+          Credential providing SMTP_PASSWORD is attached to this Job Template.
+      when: smtp_password | length == 0
+
     - name: Compute report timestamp once
       ansible.builtin.set_fact:
         report_timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
@@ -139,17 +149,17 @@
                   body={{ body | to_json }},
                   attachment_path={{ report_file | to_json }}
               )
-      no_log: false
+      no_log: true
 
     - name: Send health report through Microsoft 365
       ansible.builtin.command:
         cmd: "/usr/bin/python3 {{ email_script_path }}"
-      no_log: false
+      no_log: true
       register: email_result
 
-    - name: Show email command output
+    - name: Show email command result (safe - no_log protects credential-bearing task above)
       ansible.builtin.debug:
-        var: email_result
+        msg: "Email send task completed with rc={{ email_result.rc }}"
 
     - name: Remove temporary email script
       ansible.builtin.file:
@@ -159,3 +169,35 @@
     - name: Show report location
       ansible.builtin.debug:
         msg: "Report saved at {{ report_file }} and email submission completed."
+
+# -----------------------------------------------------------------------------
+# AAP SETUP REQUIRED (one-time, do this before running):
+#
+# 1. Create a Custom Credential Type in AAP:
+#    Automation Execution -> Infrastructure -> Credential Types -> Add
+#    Name: "SMTP Mail Credential"
+#    Input configuration (YAML):
+#      fields:
+#        - id: smtp_password
+#          type: string
+#          label: SMTP Password
+#          secret: true
+#      required:
+#        - smtp_password
+#    Injector configuration (YAML):
+#      env:
+#        SMTP_PASSWORD: "{{ smtp_password }}"
+#
+# 2. Create a Credential using that type:
+#    Automation Execution -> Infrastructure -> Credentials -> Add
+#    Type: "SMTP Mail Credential"
+#    Enter the actual SMTP password (this is encrypted at rest by AAP,
+#    never shown again, never stored in git).
+#
+# 3. Attach that Credential to this Job Template
+#    (Job Templates -> [this template] -> Credentials -> add the SMTP one
+#    alongside your existing Machine credential).
+#
+# 4. Rotate the previously-exposed password first if you haven't already -
+#    it must be treated as compromised regardless of this fix.
+# -----------------------------------------------------------------------------
