@@ -12,16 +12,11 @@
     smtp_port: 587
     smtp_username: "ola.oyetunde@tenece.com"
     sender_email: "ola.oyetunde@tenece.com"
-
-    # SMTP password is NEVER hardcoded here.
-    # It comes from an AAP Credential injected as an environment variable
-    # on the execution node at job runtime. See AAP setup notes at the
-    # bottom of this file for how to create/attach that credential.
     smtp_password: "{{ lookup('env', 'SMTP_PASSWORD') }}"
 
     recipient_emails:
       - "ola.oyetunde@tenece.com"
-      # - "another.person@tenece.com"
+      # - "olasunkanmi.aliu@tenece.com"
 
     subject: "Unix Health Report - {{ inventory_hostname }}"
     body: >-
@@ -169,35 +164,5 @@
     - name: Show report location
       ansible.builtin.debug:
         msg: "Report saved at {{ report_file }} and email submission completed."
-
-# -----------------------------------------------------------------------------
-# AAP SETUP REQUIRED (one-time, do this before running):
-#
-# 1. Create a Custom Credential Type in AAP:
-#    Automation Execution -> Infrastructure -> Credential Types -> Add
-#    Name: "SMTP Mail Credential"
-#    Input configuration (YAML):
-#      fields:
-#        - id: smtp_password
-#          type: string
-#          label: SMTP Password
-#          secret: true
-#      required:
-#        - smtp_password
-#    Injector configuration (YAML):
-#      env:
-#        SMTP_PASSWORD: "{{ smtp_password }}"
-#
-# 2. Create a Credential using that type:
-#    Automation Execution -> Infrastructure -> Credentials -> Add
-#    Type: "SMTP Mail Credential"
-#    Enter the actual SMTP password (this is encrypted at rest by AAP,
-#    never shown again, never stored in git).
-#
-# 3. Attach that Credential to this Job Template
-#    (Job Templates -> [this template] -> Credentials -> add the SMTP one
-#    alongside your existing Machine credential).
-#
-# 4. Rotate the previously-exposed password first if you haven't already -
 #    it must be treated as compromised regardless of this fix.
 # -----------------------------------------------------------------------------
