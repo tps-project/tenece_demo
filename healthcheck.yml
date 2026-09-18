@@ -154,7 +154,7 @@
     - name: Send health report through Microsoft 365
       ansible.builtin.command:
         cmd: "/usr/bin/python3 {{ email_script_path }}"
-      no_log: true
+      no_log: false
       register: email_result
 
     - name: Show email command result (safe - no_log protects credential-bearing task above)
