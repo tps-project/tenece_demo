@@ -1,6 +1,6 @@
 ---
 - name: Restart failed service and report
-  hosts: "{{ target_host }}"
+  hosts: web
   become: true
 
   vars_files:
