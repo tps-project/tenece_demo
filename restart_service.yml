@@ -44,22 +44,9 @@
           restarted_at: "{{ lookup('pipe', 'date -Iseconds') }}"
           result: "{{ 'SUCCESS' if post_restart_state.status.ActiveState == 'active' else 'FAILED — needs manual intervention' }}"
 
-    - name: Render self-healing HTML report
-      ansible.builtin.template:
-        src: ../templates/self_healing_report.html.j2
-        dest: "/tmp/self_healing_{{ target_service }}_{{ target_host }}.html"
-      delegate_to: localhost
-
-    - name: Email self-healing summary
-      community.general.mail:
-        host: "{{ smtp_relay_host }}"
-        port: 25
-        subject: "[Self-Healing] {{ target_service }} on {{ target_host }} — {{ healing_summary.result }}"
-        to: "{{ notify_email }}"
-        subtype: html
-        body: "{{ lookup('file', '/tmp/self_healing_' + target_service + '_' + target_host + '.html') }}"
-      delegate_to: localhost
-      when: notify_email is defined
+    - name: Display self-healing action summary in job output
+      ansible.builtin.debug:
+        var: healing_summary
 
     - name: Fail the job if the service did not recover, so AAP surfaces it clearly
       ansible.builtin.fail:
