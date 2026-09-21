@@ -1,0 +1,67 @@
+---
+# =============================================================================
+# Use Case #18 — Self-Healing Service Monitoring (remediation stage)
+# =============================================================================
+# Launched BY the EDA rulebook (service_auto_restart.yml), not run manually.
+# Expects extra_vars: target_service, target_host, failure_timestamp
+# =============================================================================
+
+- name: Restart failed service and report
+  hosts: "{{ target_host }}"
+  become: true
+
+  vars_files:
+    - ../inventories/lab/group_vars/eda_notify.yml
+
+  tasks:
+    - name: Record pre-restart state
+      ansible.builtin.systemd:
+        name: "{{ target_service }}"
+      register: pre_restart_state
+
+    - name: Restart the failed service
+      ansible.builtin.systemd:
+        name: "{{ target_service }}"
+        state: restarted
+        daemon_reload: true
+      register: restart_result
+
+    - name: Confirm the service came back up
+      ansible.builtin.systemd:
+        name: "{{ target_service }}"
+      register: post_restart_state
+      until: post_restart_state.status.ActiveState == 'active'
+      retries: 6
+      delay: 5
+
+  post_tasks:
+    - name: Build self-healing action summary
+      ansible.builtin.set_fact:
+        healing_summary:
+          service: "{{ target_service }}"
+          host: "{{ target_host }}"
+          failed_at: "{{ failure_timestamp | default('unknown') }}"
+          restarted_at: "{{ lookup('pipe', 'date -Iseconds') }}"
+          result: "{{ 'SUCCESS' if post_restart_state.status.ActiveState == 'active' else 'FAILED — needs manual intervention' }}"
+
+    - name: Render self-healing HTML report
+      ansible.builtin.template:
+        src: ../templates/self_healing_report.html.j2
+        dest: "/tmp/self_healing_{{ target_service }}_{{ target_host }}.html"
+      delegate_to: localhost
+
+    - name: Email self-healing summary
+      community.general.mail:
+        host: "{{ smtp_relay_host }}"
+        port: 25
+        subject: "[Self-Healing] {{ target_service }} on {{ target_host }} — {{ healing_summary.result }}"
+        to: "{{ notify_email }}"
+        subtype: html
+        body: "{{ lookup('file', '/tmp/self_healing_' + target_service + '_' + target_host + '.html') }}"
+      delegate_to: localhost
+      when: notify_email is defined
+
+    - name: Fail the job if the service did not recover, so AAP surfaces it clearly
+      ansible.builtin.fail:
+        msg: "{{ target_service }} on {{ target_host }} did not return to active state after restart — escalate manually."
+      when: post_restart_state.status.ActiveState != 'active'
