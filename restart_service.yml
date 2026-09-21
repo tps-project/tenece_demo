@@ -1,11 +1,4 @@
 ---
-# =============================================================================
-# Use Case #18 — Self-Healing Service Monitoring (remediation stage)
-# =============================================================================
-# Launched BY the EDA rulebook (service_auto_restart.yml), not run manually.
-# Expects extra_vars: target_service, target_host, failure_timestamp
-# =============================================================================
-
 - name: Restart failed service and report
   hosts: "{{ target_host }}"
   become: true
