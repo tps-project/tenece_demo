@@ -1,6 +1,6 @@
 ---
 - name: CIS Baseline Compliance Audit
-  hosts: web
+  hosts: 192.168.9.159
   become: true
   gather_facts: true
 
