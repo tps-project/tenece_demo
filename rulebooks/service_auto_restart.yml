@@ -11,7 +11,7 @@
     - name: Restart service on failure event
       condition: event.payload.failed_unit is defined
       throttle:
-        once_within: 300
+        once_within: "300 seconds"
         group_by_attributes:
           - event.payload.hostname
           - event.payload.failed_unit
