@@ -1,0 +1,4 @@
+[Unit]
+# Fires eda-notify@<unit>.service the moment this unit enters a failed state.
+# %n expands to the full unit name (e.g. httpd.service) at hook time.
+OnFailure=eda-notify@%n.service
