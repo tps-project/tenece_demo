@@ -1,0 +1,63 @@
+---
+- name: Deploy EDA self-healing hooks for monitored services
+  hosts: web
+  become: true
+
+  vars:
+    # Services this playbook wires the self-healing hook onto.
+    # Add/remove here and re-run this job to reconcile.
+    monitored_services:
+      - httpd
+      - sshd
+      - crond
+
+  tasks:
+    - name: Ensure curl is present (used by the notifier unit)
+      ansible.builtin.package:
+        name: curl
+        state: present
+
+    - name: Install the generic eda-notify@ template unit
+      ansible.builtin.template:
+        src: eda-notify@.service.j2
+        dest: /etc/systemd/system/eda-notify@.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify: reload systemd
+
+    - name: Create systemd drop-in directory for each monitored service
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}.service.d"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop: "{{ monitored_services }}"
+
+    - name: Wire OnFailure= hook into each monitored service
+      ansible.builtin.template:
+        src: notify-eda.conf.j2
+        dest: "/etc/systemd/system/{{ item }}.service.d/notify-eda.conf"
+        owner: root
+        group: root
+        mode: '0644'
+      loop: "{{ monitored_services }}"
+      notify: reload systemd
+
+    - name: Confirm each monitored service is currently active
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      register: service_state
+      loop: "{{ monitored_services }}"
+
+    - name: Report any services that are already down before hooks are live
+      ansible.builtin.debug:
+        msg: "WARNING: {{ item.item }} is not active ({{ item.status.ActiveState }}) — restart it manually before relying on self-healing."
+      loop: "{{ service_state.results }}"
+      when: item.status.ActiveState != 'active'
+
+  handlers:
+    - name: reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
