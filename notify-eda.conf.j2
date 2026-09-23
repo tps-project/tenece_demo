@@ -1,4 +1,8 @@
 [Unit]
 # Fires eda-notify@<unit>.service the moment this unit enters a failed state.
-# %n expands to the full unit name (e.g. httpd.service) at hook time.
-OnFailure=eda-notify@%n.service
+# %N = unit name with the .service suffix stripped (e.g. "httpd"), so combined
+# with the eda-notify@ template's own .service this resolves correctly to
+# eda-notify@httpd.service. Using %n here (which includes the suffix) would
+# wrongly resolve to eda-notify@httpd.service.service — a unit that doesn't
+# exist — and the hook would silently never fire.
+OnFailure=eda-notify@%N.service
