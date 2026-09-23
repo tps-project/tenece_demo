@@ -4,8 +4,6 @@
   become: true
 
   vars:
-    # Services this playbook wires the self-healing hook onto.
-    # Add/remove here and re-run this job to reconcile.
     monitored_services:
       - httpd
       - sshd
