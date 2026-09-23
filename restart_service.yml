@@ -1,10 +1,7 @@
 ---
 - name: Restart failed service and report
-  hosts: web
+  hosts: "{{ target_host }}"
   become: true
-
-  vars_files:
-    - ../inventories/lab/group_vars/eda_notify.yml
 
   tasks:
     - name: Record pre-restart state
