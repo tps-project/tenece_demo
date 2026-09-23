@@ -1,0 +1,14 @@
+[Unit]
+Description=Notify EDA controller that %i has failed
+# %i = the unit name that failed, injected by systemd from the OnFailure= line
+
+[Service]
+Type=oneshot
+# {{ inventory_hostname }} is baked in at deploy time so this always reports
+# the exact identifier AAP's inventory knows this host by (its IP, in this
+# lab) — NOT the OS's own %H hostname, which won't match an IP-based
+# inventory name and would silently break target_host matching later.
+ExecStart=/usr/bin/bash -c '/usr/bin/curl -s -k -X POST {{ eda_webhook_url }} \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer {{ eda_webhook_token }}" \
+  -d "{\"failed_unit\": \"%i\", \"hostname\": \"{{ inventory_hostname }}\", \"timestamp\": \"$(date -Iseconds)\"}"'
