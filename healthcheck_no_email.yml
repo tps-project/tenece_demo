@@ -1,0 +1,66 @@
+---
+- name: Run health check and save report
+  hosts: web
+  become: true
+  become_method: sudo
+  gather_facts: false
+
+  vars:
+    report_dir: "/var/log/ansible-health-reports"
+
+  tasks:
+    - name: Compute report timestamp once
+      ansible.builtin.set_fact:
+        report_timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+
+    - name: Set report file path
+      ansible.builtin.set_fact:
+        report_file: "{{ report_dir }}/health_report_{{ inventory_hostname }}_{{ report_timestamp }}.txt"
+
+    - name: Create health-report directory
+      ansible.builtin.file:
+        path: "{{ report_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Run health check
+      ansible.builtin.shell: |
+        #!/bin/bash
+
+        cpu=$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print 100 - $1 "%"}')
+        mem=$(free -m | awk 'NR==2 {printf "%.2f%%", $3*100/$2}')
+        disk=$(df -h / | awk 'NR==2 {print $5}')
+        fs=$(lsblk -o NAME,SIZE,MOUNTPOINT)
+        net=$(awk '/:/ && $1 !~ /lo:/ {gsub(/:/, "", $1); print $1 ": RX=" $2 " bytes, TX=" $10 " bytes"}' /proc/net/dev)
+
+        echo "UNIX HEALTH REPORT"
+        echo "=================="
+        echo "Host           : $(hostname)"
+        echo "Generated      : $(date)"
+        echo "CPU Usage      : $cpu"
+        echo "Memory Usage   : $mem"
+        echo "Disk Usage     : $disk"
+        echo
+        echo "Filesystem Info:"
+        echo "$fs"
+        echo
+        echo "Network Stats:"
+        echo "$net"
+      args:
+        executable: /bin/bash
+      register: health_output
+      changed_when: false
+
+    - name: Save health report on the server
+      ansible.builtin.copy:
+        dest: "{{ report_file }}"
+        content: "{{ health_output.stdout }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Show report location
+      ansible.builtin.debug:
+        msg: "Report saved at {{ report_file }}"
