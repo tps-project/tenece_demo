@@ -1,0 +1,91 @@
+---
+- name: Patch assessment - pending updates and security advisories
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: true
+  become: true
+
+  tasks:
+    - name: Refresh package metadata
+      ansible.builtin.dnf:
+        update_cache: true
+      changed_when: false
+
+    - name: Make sure needs-restarting is available
+      ansible.builtin.dnf:
+        name: dnf-utils
+        state: present
+
+    - name: List pending security advisories
+      ansible.builtin.command: dnf updateinfo list security --quiet
+      register: sec_raw
+      changed_when: false
+
+    - name: List all pending package updates
+      ansible.builtin.command: dnf check-update --quiet
+      register: upd_raw
+      changed_when: false
+      failed_when: upd_raw.rc not in [0, 100]   # 100 = updates available
+
+    - name: Check whether a reboot is already required
+      ansible.builtin.command: needs-restarting -r
+      register: reboot_raw
+      changed_when: false
+      failed_when: reboot_raw.rc not in [0, 1]  # 1 = reboot required
+
+    - name: Build per-host patch summary
+      ansible.builtin.set_fact:
+        patch_summary:
+          os: "{{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+          kernel: "{{ ansible_facts['kernel'] }}"
+          pending_total: >-
+            {{ upd_raw.stdout_lines
+               | select('match', '^\S+\.\S+\s+\S+\s+\S+$') | list | length }}
+          advisory_ids: >-
+            {{ sec_raw.stdout_lines
+               | select('match', '^(RHSA|RLSA|ELSA)-')
+               | map('regex_search', '^\S+') | unique | list }}
+          critical: "{{ sec_raw.stdout_lines | select('search', 'Critical/Sec') | list | length }}"
+          important: "{{ sec_raw.stdout_lines | select('search', 'Important/Sec') | list | length }}"
+          moderate: "{{ sec_raw.stdout_lines | select('search', 'Moderate/Sec') | list | length }}"
+          low: "{{ sec_raw.stdout_lines | select('search', 'Low/Sec') | list | length }}"
+          reboot_required: "{{ reboot_raw.rc == 1 }}"
+
+- name: Publish the HTML report
+  hosts: "{{ report_host | default('localhost') }}"
+  gather_facts: true
+  gather_subset: min
+  become: "{{ (report_host | default('localhost')) != 'localhost' }}"
+  vars:
+    report_dir: /var/reports/patch
+    report_title: Linux Patch Assessment Report
+  tasks:
+    - name: Collect hosts that reported a summary
+      ansible.builtin.set_fact:
+        report_hosts: >-
+          {{ hostvars | dict2items
+             | selectattr('value.patch_summary', 'defined')
+             | map(attribute='key') | sort | list }}
+
+    - name: Make sure the report directory exists
+      ansible.builtin.file:
+        path: "{{ report_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write the timestamped report
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.template', 'patch_report.html.j2') }}"
+        dest: "{{ report_dir }}/patch_assess_{{ ansible_facts['date_time']['iso8601_basic_short'] }}.html"
+        mode: "0644"
+      register: report_file
+
+    - name: Refresh the "latest" copy
+      ansible.builtin.copy:
+        src: "{{ report_file.dest }}"
+        dest: "{{ report_dir }}/patch_assess_latest.html"
+        remote_src: true
+        mode: "0644"
+
+    - name: Show where the report is
+      ansible.builtin.debug:
+        msg: "Report written to {{ report_file.dest }} on {{ inventory_hostname }}"
