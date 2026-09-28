@@ -123,8 +123,3 @@
     - name: Display update information
       ansible.builtin.debug:
         msg: "Available updates: {{ update_count | default(0) }}"
-
-
-    # ---------------------------------------------------------
-    #
-```
