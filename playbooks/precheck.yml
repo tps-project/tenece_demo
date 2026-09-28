@@ -1,0 +1,64 @@
+---
+- name: Linux Patch Management - Pre-Checks
+  hosts: web
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    - name: Display server information
+      ansible.builtin.debug:
+        msg:
+          - "Hostname: {{ ansible_hostname }}"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel: {{ ansible_kernel }}"
+          - "Uptime: {{ ansible_uptime_seconds }} seconds"
+
+    - name: Check root filesystem
+      ansible.builtin.shell: df -h /
+      register: root_disk
+      changed_when: false
+
+    - name: Display root filesystem usage
+      ansible.builtin.debug:
+        var: root_disk.stdout
+
+    - name: Check /var filesystem
+      ansible.builtin.shell: df -h /var
+      register: var_disk
+      changed_when: false
+
+    - name: Display /var filesystem usage
+      ansible.builtin.debug:
+        var: var_disk.stdout
+
+    - name: Check /boot filesystem
+      ansible.builtin.shell: df -h /boot
+      register: boot_disk
+      changed_when: false
+
+    - name: Display /boot filesystem usage
+      ansible.builtin.debug:
+        var: boot_disk.stdout
+
+    - name: Check failed systemd services
+      ansible.builtin.shell: systemctl --failed --no-legend
+      register: failed_services
+      changed_when: false
+      failed_when: false
+
+    - name: Display failed services
+      ansible.builtin.debug:
+        msg: "{{ failed_services.stdout | default('None') }}"
+
+    - name: Check available updates
+      ansible.builtin.dnf:
+        list: updates
+        update_cache: true
+      register: available_updates
+      when: ansible_facts.os_family == "RedHat"
+
+    - name: Display available update count
+      ansible.builtin.debug:
+        msg: "Available updates: {{ available_updates.results | default([]) | length }}"
+      when: ansible_facts.os_family == "RedHat"
