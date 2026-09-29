@@ -1,0 +1,26 @@
+---
+- name: Linux Patch Management - Reboot
+  hosts: web
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    - name: Check if reboot is required
+      ansible.builtin.command: needs-restarting -r
+      register: reboot_required
+      changed_when: false
+      failed_when: false
+
+    - name: Display reboot status
+      ansible.builtin.debug:
+        msg: >-
+          Reboot required:
+          {{ 'YES' if reboot_required.rc == 1 else 'NO' }}
+
+    - name: Reboot server
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+        connect_timeout: 10
+        post_reboot_delay: 30
+      when: reboot_required.rc == 1
