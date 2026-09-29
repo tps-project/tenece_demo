@@ -4,18 +4,37 @@
   become: true
   gather_facts: true
 
+  vars:
+    root_threshold: 90
+    var_threshold: 90
+    boot_threshold: 80
+
   tasks:
 
-    - name: Display patch target
-      ansible.builtin.debug:
-        msg:
-          - "=========================================="
-          - "PATCHING SERVER"
-          - "=========================================="
-          - "Hostname: {{ ansible_hostname }}"
-          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
-          - "Kernel: {{ ansible_kernel }}"
-          - "=========================================="
+    - name: Check root filesystem usage
+      ansible.builtin.shell: |
+        df -P / | awk 'NR==2 {gsub("%","",$5); print $5}'
+      register: root_usage
+      changed_when: false
+
+    - name: Check /var filesystem usage
+      ansible.builtin.shell: |
+        df -P /var | awk 'NR==2 {gsub("%","",$5); print $5}'
+      register: var_usage
+      changed_when: false
+
+    - name: Check /boot filesystem usage
+      ansible.builtin.shell: |
+        df -P /boot | awk 'NR==2 {gsub("%","",$5); print $5}'
+      register: boot_usage
+      changed_when: false
+
+    - name: Check failed systemd services
+      ansible.builtin.shell: |
+        systemctl --failed --no-legend
+      register: failed_services
+      changed_when: false
+      failed_when: false
 
     - name: Check available updates
       ansible.builtin.dnf:
@@ -23,22 +42,54 @@
         update_cache: true
       register: available_updates
 
-    - name: Display update count
-      ansible.builtin.debug:
-        msg: "Updates available before patching: {{ available_updates.results | length }}"
+    - name: Determine patch eligibility
+      ansible.builtin.set_fact:
+        patch_eligible: >-
+          {{
+            ansible_distribution == 'RedHat'
+            and (root_usage.stdout | int <= root_threshold)
+            and (var_usage.stdout | int <= var_threshold)
+            and (boot_usage.stdout | int <= boot_threshold)
+          }}
 
-    - name: Apply available updates
+    - name: Display patch decision
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "PATCH DECISION"
+          - "=========================================="
+          - "Server: {{ inventory_hostname }}"
+          - "Hostname: {{ ansible_hostname }}"
+          - "Root: {{ root_usage.stdout }}%"
+          - "/var: {{ var_usage.stdout }}%"
+          - "/boot: {{ boot_usage.stdout }}%"
+          - "Available Updates: {{ available_updates.results | length }}"
+          - "Patch Eligible: {{ patch_eligible }}"
+          - "=========================================="
+
+    - name: Skip ineligible server
+      ansible.builtin.debug:
+        msg: "SKIPPED - Server did not pass patch eligibility checks."
+      when: not patch_eligible
+
+    - name: Apply all available updates
       ansible.builtin.dnf:
         name: "*"
         state: latest
       register: patch_result
+      when:
+        - patch_eligible
+        - available_updates.results | length > 0
 
     - name: Display patch result
       ansible.builtin.debug:
         msg:
           - "=========================================="
-          - "PATCH COMPLETE"
+          - "PATCH RESULT"
           - "=========================================="
           - "Server: {{ inventory_hostname }}"
-          - "Packages changed: {{ patch_result.changed }}"
+          - "Patch Eligible: {{ patch_eligible }}"
+          - "Updates Available Before Patch: {{ available_updates.results | length }}"
+          - "Packages Changed: {{ patch_result.changed | default(false) }}"
           - "=========================================="
+      when: patch_eligible
