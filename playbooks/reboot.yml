@@ -4,23 +4,81 @@
   become: true
   gather_facts: true
 
+  vars:
+    root_threshold: 90
+    var_threshold: 90
+    boot_threshold: 80
+
   tasks:
+
+    - name: Check operating system
+      ansible.builtin.set_fact:
+        os_check_passed: "{{ ansible_distribution == 'RedHat' }}"
+
+    - name: Check root filesystem
+      ansible.builtin.shell: |
+        df -P / | awk 'NR==2 {gsub("%","",$5); print $5}'
+      register: root_usage
+      changed_when: false
+
+    - name: Check /var filesystem
+      ansible.builtin.shell: |
+        df -P /var | awk 'NR==2 {gsub("%","",$5); print $5}'
+      register: var_usage
+      changed_when: false
+
+    - name: Check /boot filesystem
+      ansible.builtin.shell: |
+        df -P /boot | awk 'NR==2 {gsub("%","",$5); print $5}'
+      register: boot_usage
+      changed_when: false
+
+    - name: Check failed services
+      ansible.builtin.shell: |
+        systemctl --failed --no-legend
+      register: failed_services
+      changed_when: false
+      failed_when: false
+
+    - name: Determine patch eligibility
+      ansible.builtin.set_fact:
+        patch_eligible: >-
+          {{
+            os_check_passed
+            and (root_usage.stdout | int <= root_threshold)
+            and (var_usage.stdout | int <= var_threshold)
+            and (boot_usage.stdout | int <= boot_threshold)
+            and (failed_services.stdout | trim == '')
+          }}
 
     - name: Check if reboot is required
       ansible.builtin.command: needs-restarting -r
       register: reboot_required
       changed_when: false
       failed_when: false
+      when: patch_eligible
 
-    - name: Display reboot status
+    - name: Display reboot decision
       ansible.builtin.debug:
-        msg: >-
-          Reboot required:
-          {{ 'YES' if reboot_required.rc == 1 else 'NO' }}
+        msg:
+          - "=========================================="
+          - "REBOOT DECISION"
+          - "=========================================="
+          - "Server: {{ inventory_hostname }}"
+          - "Patch Eligible: {{ patch_eligible }}"
+          - "Reboot Required: {{ 'YES' if patch_eligible and reboot_required.rc == 1 else 'NO' }}"
+          - "=========================================="
+
+    - name: Skip ineligible server
+      ansible.builtin.debug:
+        msg: "SKIPPED - Server did not pass patch eligibility checks."
+      when: not patch_eligible
 
     - name: Reboot server
       ansible.builtin.reboot:
         reboot_timeout: 600
         connect_timeout: 10
         post_reboot_delay: 30
-      when: reboot_required.rc == 1
+      when:
+        - patch_eligible
+        - reboot_required.rc == 1
