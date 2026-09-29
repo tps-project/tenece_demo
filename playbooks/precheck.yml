@@ -11,10 +11,6 @@
 
   tasks:
 
-    # ---------------------------------------------------------
-    # 1. Basic Server Information
-    # ---------------------------------------------------------
-
     - name: Display server information
       ansible.builtin.debug:
         msg:
@@ -24,10 +20,6 @@
           - "Kernel: {{ ansible_kernel }}"
           - "Uptime: {{ (ansible_uptime_seconds / 86400) | round(1) }} days"
 
-
-    # ---------------------------------------------------------
-    # 2. Check Operating System
-    # ---------------------------------------------------------
 
     - name: Validate operating system
       ansible.builtin.set_fact:
@@ -39,10 +31,6 @@
           OS Check:
           {{ 'PASS' if os_check_passed else 'FAIL' }}
 
-
-    # ---------------------------------------------------------
-    # 3. Filesystem Checks
-    # ---------------------------------------------------------
 
     - name: Get root filesystem usage
       ansible.builtin.shell: |
@@ -63,10 +51,6 @@
       changed_when: false
 
 
-    # ---------------------------------------------------------
-    # 4. Evaluate Filesystem Thresholds
-    # ---------------------------------------------------------
-
     - name: Evaluate filesystem checks
       ansible.builtin.set_fact:
         root_check_passed: "{{ root_usage.stdout | int <= root_threshold }}"
@@ -80,10 +64,6 @@
           - "/var: {{ var_usage.stdout }}% - {{ 'PASS' if var_check_passed else 'FAIL' }}"
           - "/boot: {{ boot_usage.stdout }}% - {{ 'PASS' if boot_check_passed else 'FAIL' }}"
 
-
-    # ---------------------------------------------------------
-    # 5. Check Failed Systemd Services
-    # ---------------------------------------------------------
 
     - name: Check failed systemd services
       ansible.builtin.shell: |
@@ -104,10 +84,6 @@
              else 'WARNING - Failed services detected' }}
 
 
-    # ---------------------------------------------------------
-    # 6. Check DNF / Available Updates
-    # ---------------------------------------------------------
-
     - name: Check available updates
       ansible.builtin.dnf:
         list: updates
@@ -123,3 +99,47 @@
     - name: Display update information
       ansible.builtin.debug:
         msg: "Available updates: {{ update_count | default(0) }}"
+
+
+    - name: Determine patch eligibility
+      ansible.builtin.set_fact:
+        patch_eligible: >-
+          {{
+            os_check_passed
+            and root_check_passed
+            and var_check_passed
+            and boot_check_passed
+          }}
+
+
+    - name: Determine pre-check status
+      ansible.builtin.set_fact:
+        precheck_status: >-
+          {{
+            'FAIL'
+            if not patch_eligible
+            else
+            'WARNING'
+            if not services_check_passed
+            else
+            'PASS'
+          }}
+
+
+    - name: Display pre-check result
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "PATCH PRE-CHECK RESULT"
+          - "=========================================="
+          - "Server: {{ inventory_hostname }}"
+          - "Hostname: {{ ansible_hostname }}"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Root: {{ root_usage.stdout }}%"
+          - "/var: {{ var_usage.stdout }}%"
+          - "/boot: {{ boot_usage.stdout }}%"
+          - "Failed Services: {{ 'YES' if not services_check_passed else 'NO' }}"
+          - "Available Updates: {{ update_count | default(0) }}"
+          - "Patch Eligible: {{ patch_eligible }}"
+          - "Pre-check Status: {{ precheck_status }}"
+          - "=========================================="
