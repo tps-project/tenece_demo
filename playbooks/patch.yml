@@ -1,0 +1,44 @@
+---
+- name: Linux Patch Management - Patch
+  hosts: web
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    - name: Display patch target
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "PATCHING SERVER"
+          - "=========================================="
+          - "Hostname: {{ ansible_hostname }}"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel: {{ ansible_kernel }}"
+          - "=========================================="
+
+    - name: Check available updates
+      ansible.builtin.dnf:
+        list: updates
+        update_cache: true
+      register: available_updates
+
+    - name: Display update count
+      ansible.builtin.debug:
+        msg: "Updates available before patching: {{ available_updates.results | length }}"
+
+    - name: Apply available updates
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+      register: patch_result
+
+    - name: Display patch result
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "PATCH COMPLETE"
+          - "=========================================="
+          - "Server: {{ inventory_hostname }}"
+          - "Packages changed: {{ patch_result.changed }}"
+          - "=========================================="
