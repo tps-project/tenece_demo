@@ -23,23 +23,36 @@
       failed_when: false
 
     - name: Check root filesystem
-      ansible.builtin.shell: df -P / | awk 'NR==2 {print $5}'
+      ansible.builtin.shell: |
+        df -P / | awk 'NR==2 {print $5}'
       register: root_usage
       changed_when: false
 
     - name: Check /var filesystem
-      ansible.builtin.shell: df -P /var | awk 'NR==2 {print $5}'
+      ansible.builtin.shell: |
+        df -P /var | awk 'NR==2 {print $5}'
       register: var_usage
       changed_when: false
 
     - name: Check /boot filesystem
-      ansible.builtin.shell: df -P /boot | awk 'NR==2 {print $5}'
+      ansible.builtin.shell: |
+        df -P /boot | awk 'NR==2 {print $5}'
       register: boot_usage
       changed_when: false
 
+    - name: Check remaining updates
+      ansible.builtin.dnf:
+        list: updates
+        update_cache: true
+      register: remaining_updates
+
     - name: Determine post-check status
       ansible.builtin.set_fact:
-        postcheck_passed: "{{ failed_services.stdout | trim == '' }}"
+        postcheck_passed: >-
+          {{
+            failed_services.stdout | trim == ''
+            and (remaining_updates.results | length == 0)
+          }}
 
     - name: Display post-check result
       ansible.builtin.debug:
@@ -55,6 +68,7 @@
           - "Root: {{ root_usage.stdout }}"
           - "/var: {{ var_usage.stdout }}"
           - "/boot: {{ boot_usage.stdout }}"
-          - "Failed Services: {{ 'YES' if not postcheck_passed else 'NO' }}"
+          - "Failed Services: {{ 'YES' if failed_services.stdout | trim != '' else 'NO' }}"
+          - "Remaining Updates: {{ remaining_updates.results | length }}"
           - "Post-check Status: {{ 'PASS' if postcheck_passed else 'FAIL' }}"
           - "=========================================="
