@@ -11,6 +11,10 @@
 
   tasks:
 
+    - name: Check operating system
+      ansible.builtin.set_fact:
+        os_check_passed: "{{ ansible_distribution == 'RedHat' }}"
+
     - name: Check root filesystem usage
       ansible.builtin.shell: |
         df -P / | awk 'NR==2 {gsub("%","",$5); print $5}'
@@ -29,12 +33,22 @@
       register: boot_usage
       changed_when: false
 
+    - name: Evaluate filesystem checks
+      ansible.builtin.set_fact:
+        root_check_passed: "{{ root_usage.stdout | int <= root_threshold }}"
+        var_check_passed: "{{ var_usage.stdout | int <= var_threshold }}"
+        boot_check_passed: "{{ boot_usage.stdout | int <= boot_threshold }}"
+
     - name: Check failed systemd services
       ansible.builtin.shell: |
         systemctl --failed --no-legend
       register: failed_services
       changed_when: false
       failed_when: false
+
+    - name: Determine service status
+      ansible.builtin.set_fact:
+        services_check_passed: "{{ failed_services.stdout | trim == '' }}"
 
     - name: Check available updates
       ansible.builtin.dnf:
@@ -46,10 +60,11 @@
       ansible.builtin.set_fact:
         patch_eligible: >-
           {{
-            ansible_distribution == 'RedHat'
-            and (root_usage.stdout | int <= root_threshold)
-            and (var_usage.stdout | int <= var_threshold)
-            and (boot_usage.stdout | int <= boot_threshold)
+            os_check_passed
+            and root_check_passed
+            and var_check_passed
+            and boot_check_passed
+            and services_check_passed
           }}
 
     - name: Display patch decision
@@ -60,9 +75,11 @@
           - "=========================================="
           - "Server: {{ inventory_hostname }}"
           - "Hostname: {{ ansible_hostname }}"
-          - "Root: {{ root_usage.stdout }}%"
-          - "/var: {{ var_usage.stdout }}%"
-          - "/boot: {{ boot_usage.stdout }}%"
+          - "OS Check: {{ 'PASS' if os_check_passed else 'FAIL' }}"
+          - "Root: {{ root_usage.stdout }}% - {{ 'PASS' if root_check_passed else 'FAIL' }}"
+          - "/var: {{ var_usage.stdout }}% - {{ 'PASS' if var_check_passed else 'FAIL' }}"
+          - "/boot: {{ boot_usage.stdout }}% - {{ 'PASS' if boot_check_passed else 'FAIL' }}"
+          - "Failed Services: {{ 'NO' if services_check_passed else 'YES' }}"
           - "Available Updates: {{ available_updates.results | length }}"
           - "Patch Eligible: {{ patch_eligible }}"
           - "=========================================="
@@ -80,6 +97,13 @@
       when:
         - patch_eligible
         - available_updates.results | length > 0
+
+    - name: No updates available
+      ansible.builtin.debug:
+        msg: "No updates available. Nothing to patch."
+      when:
+        - patch_eligible
+        - available_updates.results | length == 0
 
     - name: Display patch result
       ansible.builtin.debug:
