@@ -1,0 +1,60 @@
+---
+- name: Linux Patch Management - Post Checks
+  hosts: web
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    - name: Check system uptime
+      ansible.builtin.command: uptime
+      register: uptime_result
+      changed_when: false
+
+    - name: Check current kernel
+      ansible.builtin.command: uname -r
+      register: kernel_result
+      changed_when: false
+
+    - name: Check failed systemd services
+      ansible.builtin.command: systemctl --failed --no-legend
+      register: failed_services
+      changed_when: false
+      failed_when: false
+
+    - name: Check root filesystem
+      ansible.builtin.shell: df -P / | awk 'NR==2 {print $5}'
+      register: root_usage
+      changed_when: false
+
+    - name: Check /var filesystem
+      ansible.builtin.shell: df -P /var | awk 'NR==2 {print $5}'
+      register: var_usage
+      changed_when: false
+
+    - name: Check /boot filesystem
+      ansible.builtin.shell: df -P /boot | awk 'NR==2 {print $5}'
+      register: boot_usage
+      changed_when: false
+
+    - name: Determine post-check status
+      ansible.builtin.set_fact:
+        postcheck_passed: "{{ failed_services.stdout | trim == '' }}"
+
+    - name: Display post-check result
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "PATCH POST-CHECK RESULT"
+          - "=========================================="
+          - "Server: {{ inventory_hostname }}"
+          - "Hostname: {{ ansible_hostname }}"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel: {{ kernel_result.stdout }}"
+          - "Uptime: {{ uptime_result.stdout }}"
+          - "Root: {{ root_usage.stdout }}"
+          - "/var: {{ var_usage.stdout }}"
+          - "/boot: {{ boot_usage.stdout }}"
+          - "Failed Services: {{ 'YES' if not postcheck_passed else 'NO' }}"
+          - "Post-check Status: {{ 'PASS' if postcheck_passed else 'FAIL' }}"
+          - "=========================================="
